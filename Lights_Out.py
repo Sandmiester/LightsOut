@@ -2,10 +2,14 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import subprocess
 import sys
+import os
 import threading
 import ctypes
 import ctypes.wintypes as wt
 import math
+
+if sys.platform == "win32":
+    import winreg
 
 # ─── Platform ─────────────────────────────────────────────────────────────────
 IS_WIN = sys.platform == "win32"
@@ -139,7 +143,7 @@ class Win32Tray:
         kernel32 = ctypes.windll.kernel32
 
         hinstance  = kernel32.GetModuleHandleW(None)
-        class_name = "ShutdownSchedulerTray"
+        class_name = "LightsOutTray"
 
         WNDPROC  = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, ctypes.c_uint, WPARAM, LPARAM)
         wnd_proc = WNDPROC(self._wnd_proc)   # keep reference alive
@@ -166,7 +170,7 @@ class Win32Tray:
         nid.uFlags           = NIF_ICON | NIF_MESSAGE | NIF_TIP
         nid.uCallbackMessage = TRAY_MSG
         nid.hIcon            = self._make_power_icon()
-        nid.szTip            = "Shutdown Scheduler"
+        nid.szTip            = "Lights Out"
         self._nid = nid
 
         shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
@@ -441,7 +445,7 @@ class ShutdownApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("⏻ Shutdown Scheduler")
+        self.root.title("⏻ Lights Out")
         self.root.geometry("380x480")
         self.root.resizable(False, False)
         self.root.attributes("-topmost", True)
@@ -475,6 +479,9 @@ class ShutdownApp:
         self._drag_x           = 0
         self._drag_y           = 0
 
+        if IS_WIN:
+            self.startup_var = tk.BooleanVar(value=self._is_startup_enabled())
+
         self._setup_styles()
         self._build_titlebar()
         self._apply_background()
@@ -489,6 +496,10 @@ class ShutdownApp:
             except Exception as e:
                 print(f"[tray] init failed: {e}")
 
+        if "--minimized" in sys.argv:
+            self.root.withdraw()
+            self._tray_hint_shown = True # Don't show the "Minimised to Tray" bubble on auto-start
+
     # ─── Custom title bar ─────────────────────────────────────────────────────
     def _build_titlebar(self):
         c = self.colors
@@ -502,7 +513,7 @@ class ShutdownApp:
         # Power icon + title
         tk.Label(tb, text="⏻", font=("Segoe UI", 11),
                  fg=c["accent"], bg=c["titlebar"]).pack(side="left", padx=(8, 4))
-        tk.Label(tb, text="Shutdown Scheduler",
+        tk.Label(tb, text="Lights Out",
                  font=("Segoe UI", 9, "bold"),
                  fg=c["text_primary"], bg=c["titlebar"]).pack(side="left")
 
@@ -607,7 +618,7 @@ class ShutdownApp:
             self._tray.set_tooltip(
                 f"{action} in {self._format_time(self.remaining_seconds)}")
         else:
-            self._tray.set_tooltip("Shutdown Scheduler")
+            self._tray.set_tooltip("Lights Out")
 
     def _setup_styles(self):
         s  = ttk.Style()
@@ -666,7 +677,7 @@ class ShutdownApp:
         # Header
         hf = tk.Frame(self.content_frame, bg=c["bg_dark"])
         hf.pack(pady=(0, 6))
-        tk.Label(hf, text="⏻  Shutdown Scheduler",
+        tk.Label(hf, text="⏻  Lights Out",
                  font=("Segoe UI", 15, "bold"),
                  fg=c["text_primary"], bg=c["bg_dark"]).pack()
         tk.Label(hf, text="Schedule your PC to shut down or restart",
@@ -764,7 +775,7 @@ class ShutdownApp:
         # Action buttons
         af = tk.Frame(card, bg=c["bg_card"])
         af.pack(pady=10)
-        self.shutdown_btn = ttk.Button(af, text="⏻  Schedule Shutdown",
+        self.shutdown_btn = ttk.Button(af, text="⏻  Schedule Lights Out",
                                        style="Shutdown.TButton",
                                        command=self._schedule_shutdown)
         self.shutdown_btn.pack(side="left", padx=4)
@@ -775,13 +786,62 @@ class ShutdownApp:
         self.cancel_btn.pack(side="left", padx=4)
 
         # Footer
+        footer_f = tk.Frame(self.content_frame, bg=c["bg_dark"])
+        footer_f.pack(pady=(5, 2))
+
+        if IS_WIN:
+            # Add a small stylish checkbox for startup
+            self.style.configure("Startup.TCheckbutton", background=c["bg_dark"], 
+                                 foreground=c["text_muted"], font=("Segoe UI", 8))
+            cb = ttk.Checkbutton(footer_f, text="Run on Startup", variable=self.startup_var, 
+                                 command=self._toggle_startup, style="Startup.TCheckbutton")
+            cb.pack(side="top", pady=(0, 2))
+
         tray_txt = "· Tray active" if IS_WIN else "· Tray: Windows only"
-        tk.Label(self.content_frame,
+        tk.Label(footer_f,
                  text=f"{'WIN32' if IS_WIN else sys.platform.upper()}  {tray_txt}",
                  font=("Segoe UI", 8),
-                 fg=c["text_muted"], bg=c["bg_dark"]).pack(pady=(5, 2))
+                 fg=c["text_muted"], bg=c["bg_dark"]).pack()
 
     # ─── Helpers ──────────────────────────────────────────────────────────────
+    def _is_startup_enabled(self):
+        if not IS_WIN: return False
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            winreg.QueryValueEx(key, "LightsOut")
+            winreg.CloseKey(key)
+            return True
+        except Exception:
+            return False
+
+    def _toggle_startup(self):
+        if not IS_WIN: return
+        
+        app_name = "LightsOut"
+        if getattr(sys, 'frozen', False):
+            app_path = sys.executable
+        else:
+            app_path = os.path.abspath(sys.argv[0])
+
+        if self.startup_var.get():
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_WRITE)
+                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{app_path}" --minimized')
+                winreg.CloseKey(key)
+            except Exception as e:
+                self._show_info("Error", f"Failed to enable startup: {e}")
+                self.startup_var.set(False)
+        else:
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_WRITE)
+                winreg.DeleteValue(key, app_name)
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+            except Exception as e:
+                self._show_info("Error", f"Failed to disable startup: {e}")
+                self.startup_var.set(True)
+
     def _center_window(self):
         self.root.update_idletasks()
         w, h = self.root.winfo_width(), self.root.winfo_height()
@@ -791,7 +851,7 @@ class ShutdownApp:
 
     # Maps mode → (button_attr, schedule button label)
     _MODE_CFG = {
-        "shutdown": ("shutdown_mode_btn", "⏻  Schedule Shutdown"),
+        "shutdown": ("shutdown_mode_btn", "⏻  Schedule Lights Out"),
         "restart":  ("restart_mode_btn",  "↺  Schedule Restart"),
         "sleep":    ("sleep_mode_btn",    "🌙  Schedule Sleep"),
     }
@@ -930,7 +990,7 @@ class ShutdownApp:
                 self._tray_hint_shown = True
                 self.root.after(200, lambda: self._show_info(
                     "Minimised to Tray",
-                    "Shutdown Scheduler is still running in the system tray.\n\n"
+                    "Lights Out is still running in the system tray.\n\n"
                     "Right-click the tray icon to schedule or quit."))
         else:
             if self.is_scheduled:
