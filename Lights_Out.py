@@ -1017,6 +1017,24 @@ class ShutdownApp:
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # Single instance check using a named Mutex
+    if IS_WIN:
+        kernel32 = ctypes.windll.kernel32
+        mutex_name = "Global\\LightsOut_SingleInstance_Mutex"
+        # CreateMutexW(security_attributes, initial_owner, name)
+        mutex = kernel32.CreateMutexW(None, False, mutex_name)
+        last_error = kernel32.GetLastError()
+        
+        # ERROR_ALREADY_EXISTS = 183
+        if last_error == 183:
+            # Another instance is already running
+            # Optional: Find the existing window and bring it to front
+            hwnd = ctypes.windll.user32.FindWindowW("TkTopLevel", "⏻ Lights Out")
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 5) # SW_SHOW
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            sys.exit(0)
+
     root = tk.Tk()
     root.configure(bg="#0f0f1a")
     app = ShutdownApp(root)
