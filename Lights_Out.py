@@ -433,6 +433,232 @@ class CustomMessage(tk.Toplevel):
     def _no(self): self.result = False; self.destroy()
     def _cancel(self): self.result = None; self.destroy()
 
+
+# ─── Dark-themed spinner widget ───────────────────────────────────────────────
+class DarkSpinner(tk.Frame):
+    """
+    A fully themed up/down spinner that replaces ttk.Combobox.
+    Exposes .get(), .set(val), and .config(state=) to match the old interface.
+    """
+    def __init__(self, parent, min_val=0, max_val=59, initial=0,
+                 width=56, colors=None, **kwargs):
+        c = colors or {}
+        bg       = c.get("input_bg",      "#12121f")
+        fg       = c.get("text_primary",  "#ffffff")
+        muted    = c.get("text_muted",    "#5a5a72")
+        accent   = c.get("accent",        "#e94560")
+        border   = c.get("border",        "#2a2a40")
+        card     = c.get("bg_card",       "#1a1a2e")
+
+        super().__init__(parent, bg=card, **kwargs)
+
+        self._min   = min_val
+        self._max   = max_val
+        self._value = initial
+        self._enabled = True
+
+        # Border frame
+        border_f = tk.Frame(self, bg=border, padx=1, pady=1)
+        border_f.pack()
+
+        inner = tk.Frame(border_f, bg=bg)
+        inner.pack()
+
+        # Up button
+        self._up_btn = tk.Button(
+            inner, text="▲", font=("Segoe UI", 6), fg=muted, bg=bg,
+            activeforeground=accent, activebackground=bg,
+            relief="flat", bd=0, cursor="hand2", width=3,
+            command=self._increment)
+        self._up_btn.pack(pady=(2, 0))
+
+        # Value label
+        self._label = tk.Label(
+            inner, text=str(self._value),
+            font=("Consolas", 16, "bold"),
+            fg=fg, bg=bg, width=2, anchor="center")
+        self._label.pack(padx=6)
+
+        # Down button
+        self._down_btn = tk.Button(
+            inner, text="▼", font=("Segoe UI", 6), fg=muted, bg=bg,
+            activeforeground=accent, activebackground=bg,
+            relief="flat", bd=0, cursor="hand2", width=3,
+            command=self._decrement)
+        self._down_btn.pack(pady=(0, 2))
+
+        # Mouse wheel support
+        self._label.bind("<MouseWheel>", self._on_scroll)
+        inner.bind("<MouseWheel>", self._on_scroll)
+
+    def _increment(self):
+        if not self._enabled: return
+        self._value = self._min if self._value >= self._max else self._value + 1
+        self._label.config(text=str(self._value))
+
+    def _decrement(self):
+        if not self._enabled: return
+        self._value = self._max if self._value <= self._min else self._value - 1
+        self._label.config(text=str(self._value))
+
+    def _on_scroll(self, event):
+        if event.delta > 0:
+            self._increment()
+        else:
+            self._decrement()
+
+    def get(self):
+        return str(self._value)
+
+    def set(self, val):
+        self._value = max(self._min, min(self._max, int(val)))
+        self._label.config(text=str(self._value))
+
+    def config(self, **kwargs):
+        state = kwargs.get("state")
+        if state == "disabled":
+            self._enabled = False
+            self._up_btn.config(state="disabled")
+            self._down_btn.config(state="disabled")
+        elif state in ("normal", "readonly"):
+            self._enabled = True
+            self._up_btn.config(state="normal")
+            self._down_btn.config(state="normal")
+
+
+
+# ─── Dark-themed toggle switch ────────────────────────────────────────────────
+class DarkCheckbox(tk.Frame):
+    """Animated pill-style toggle switch matching the dark UI."""
+    W, H = 44, 22   # track dimensions
+
+    def __init__(self, parent, text="", variable=None, command=None, colors=None, **kwargs):
+        c = colors or {}
+        self._bg        = c.get("bg_dark",     "#0f0f1a")
+        self._accent    = c.get("accent",       "#e94560")
+        self._border    = c.get("border",       "#2a2a40")
+        self._fg        = c.get("text_muted",   "#5a5a72")
+        self._fg_on     = c.get("text_primary", "#ffffff")
+        self._track_off = c.get("bg_card_alt",  "#16213e")
+        self._hover_bg  = c.get("bg_card",      "#1a1a2e")
+
+        super().__init__(parent, bg=self._bg, cursor="hand2", **kwargs)
+
+        self._var     = variable if variable is not None else tk.BooleanVar()
+        self._command = command
+        self._anim_id = None
+        self._knob_x  = 4  # current animated x position of knob
+
+        # Canvas for the toggle track + knob
+        self._cv = tk.Canvas(self, width=self.W, height=self.H,
+                             bg=self._bg, highlightthickness=0)
+        self._cv.pack(side="left", padx=(0, 8))
+
+        # Label
+        self._lbl = tk.Label(self, text=text, font=("Segoe UI", 9),
+                             fg=self._fg, bg=self._bg)
+        self._lbl.pack(side="left")
+
+        self._draw()
+
+        for w in (self, self._cv, self._lbl):
+            w.bind("<Button-1>", self._toggle)
+            w.bind("<Enter>",    self._on_enter)
+            w.bind("<Leave>",    self._on_leave)
+
+    # ── Drawing ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _pill_points(x0, y0, x1, y1, steps=40):
+        """Return a flat list of (x,y) points forming a smooth pill/stadium shape."""
+        import math
+        r  = (y1 - y0) / 2
+        cy = (y0 + y1) / 2
+        pts = []
+        # Left semicircle (90° → 270°)
+        cx = x0 + r
+        for i in range(steps + 1):
+            a = math.radians(90 + 180 * i / steps)
+            pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
+        # Right semicircle (270° → 90°)
+        cx = x1 - r
+        for i in range(steps + 1):
+            a = math.radians(270 + 180 * i / steps)
+            pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
+        return pts
+
+    def _draw(self, knob_x=None):
+        cv = self._cv
+        cv.delete("all")
+        on   = self._var.get()
+        W, H = self.W, self.H
+        pad  = 2          # inset from canvas edge
+        kr   = H / 2 - pad - 1   # knob radius
+
+        if knob_x is None:
+            knob_x = W - pad - kr * 2 - 2 if on else pad + 2
+            self._knob_x = knob_x
+
+        track_color = self._accent if on else self._track_off
+        bg = self._cv["bg"]
+
+        # Smooth pill track
+        pts = self._pill_points(pad, pad, W - pad, H - pad)
+        cv.create_polygon(pts, fill=track_color, outline="", smooth=False)
+
+        # Knob shadow (slightly larger, semi-transparent approximated by bg blend)
+        sx = knob_x + kr
+        sy = H / 2 + 1
+        sr = kr + 1
+        cv.create_oval(sx - sr, sy - sr, sx + sr, sy + sr,
+                       fill=self._border, outline="")
+
+        # Knob — smooth circle
+        kx = knob_x + kr
+        ky = H / 2
+        cv.create_oval(kx - kr, ky - kr, kx + kr, ky + kr,
+                       fill="white", outline="")
+
+    # ── Animation ────────────────────────────────────────────────────────────
+    def _animate(self):
+        on       = self._var.get()
+        target_x = (self.W - self.H + 2) if on else 4
+        step     = 3 if on else -3
+        new_x    = self._knob_x + step
+
+        if (on and new_x >= target_x) or (not on and new_x <= target_x):
+            new_x = target_x
+
+        self._knob_x = new_x
+        self._draw(knob_x=new_x)
+
+        if new_x != target_x:
+            self._anim_id = self.after(12, self._animate)
+        else:
+            self._anim_id = None
+
+    # ── Interaction ──────────────────────────────────────────────────────────
+    def _toggle(self, event=None):
+        if self._anim_id:
+            self.after_cancel(self._anim_id)
+        self._var.set(not self._var.get())
+        self._lbl.config(fg=self._fg_on if self._var.get() else self._fg)
+        self._animate()
+        if self._command:
+            self._command()
+
+    def _on_enter(self, event=None):
+        for w in (self, self._lbl):
+            w.config(bg=self._hover_bg)
+        self._cv.config(bg=self._hover_bg)
+        self._draw(knob_x=self._knob_x)
+
+    def _on_leave(self, event=None):
+        for w in (self, self._lbl):
+            w.config(bg=self._bg)
+        self._cv.config(bg=self._bg)
+        self._draw(knob_x=self._knob_x)
+
+
 # ─── Main application ──────────────────────────────────────────────────────────
 class ShutdownApp:
     PRESETS = [
@@ -446,12 +672,15 @@ class ShutdownApp:
     def __init__(self, root):
         self.root = root
         self.root.title("⏻ Lights Out")
-        self.root.geometry("380x480")
+        self.root.geometry("380x540")
         self.root.resizable(False, False)
         self.root.attributes("-topmost", True)
 
-        # Remove the OS title bar — we draw our own
+        # Remove the OS title bar — we draw our own.
+        # overrideredirect and withdraw are already applied at the entry point
+        # before this class is constructed, so we don't repeat them here.
         self.root.overrideredirect(True)
+        _start_minimized = "--minimized" in sys.argv
 
         self.colors = {
             "bg_dark":        "#0f0f1a",
@@ -496,9 +725,8 @@ class ShutdownApp:
             except Exception as e:
                 print(f"[tray] init failed: {e}")
 
-        if "--minimized" in sys.argv:
-            self.root.withdraw()
-            self._tray_hint_shown = True # Don't show the "Minimised to Tray" bubble on auto-start
+        if _start_minimized:
+            self._tray_hint_shown = True  # Don't show the "Minimised to Tray" bubble on auto-start
 
     # ─── Custom title bar ─────────────────────────────────────────────────────
     def _build_titlebar(self):
@@ -552,15 +780,14 @@ class ShutdownApp:
         self.root.geometry(f"+{x}+{y}")
 
     def _minimise(self):
-        """Minimise to taskbar (requires briefly re-enabling the OS chrome)."""
-        self.root.overrideredirect(False)
-        self.root.iconify()
-        # Re-apply frameless after restore
-        self.root.bind("<Map>", self._on_restore)
-
-    def _on_restore(self, event=None):
-        self.root.overrideredirect(True)
-        self.root.unbind("<Map>")
+        """Hide window to system tray."""
+        self.root.withdraw()
+        if self._tray and not self._tray_hint_shown:
+            self._tray_hint_shown = True
+            self.root.after(200, lambda: self._show_info(
+                "Minimised to Tray",
+                "Lights Out is still running in the system tray.\n\n"
+                "Right-click the tray icon to schedule or quit."))
 
     # ─── Tray callbacks ───────────────────────────────────────────────────────
     def _tray_action(self, action, data):
@@ -579,6 +806,10 @@ class ShutdownApp:
 
     def _show_window(self):
         self.root.overrideredirect(True)
+        self.root.withdraw()   # ensure clean state before showing
+        self.root.after(10, self._do_show_window)
+
+    def _do_show_window(self):
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
@@ -631,14 +862,6 @@ class ShutdownApp:
                         borderwidth=0, focusthickness=0, **kw)
             s.map(name, background=[("active", hover)])
 
-        s.configure("Spinner.TCombobox",
-                    background=c["input_bg"], foreground=c["text_primary"],
-                    fieldbackground=c["input_bg"],
-                    font=("Consolas", 16, "bold"), padding=3)
-        s.map("Spinner.TCombobox",
-              background=[("readonly", c["input_bg"])],
-              fieldbackground=[("readonly", c["input_bg"])])
-
         btn("Shutdown.TButton",     c["accent"],       "white",             c["accent_hover"],
             font=("Segoe UI", 11, "bold"), padding=(16, 9), width=18, anchor="center")
         btn("Cancel.TButton",       "#2d3436",         c["text_secondary"], "#3d4446",
@@ -663,9 +886,9 @@ class ShutdownApp:
     def _apply_background(self):
         self.canvas = tk.Canvas(self.root, highlightthickness=0,
                                 bg=self.colors["bg_dark"])
-        self.canvas.place(x=0, y=32, relwidth=1, height=448)
+        self.canvas.place(x=0, y=32, relwidth=1, height=508)
         # Bottom accent bar
-        self.canvas.create_rectangle(0, 445, 380, 448,
+        self.canvas.create_rectangle(0, 505, 380, 508,
                                      fill=self.colors["accent"], outline="")
         self.content_frame = tk.Frame(self.root, bg=self.colors["bg_dark"])
         self.content_frame.place(relx=0.5, y=32, anchor="n")
@@ -719,11 +942,8 @@ class ShutdownApp:
         h_frame.pack(side="left", padx=4)
         tk.Label(h_frame, text="HRS", font=("Segoe UI", 8),
                  fg=c["text_muted"], bg=c["bg_card"]).pack()
-        self.hour_var = tk.StringVar(value="0")
-        self.hour_spin = ttk.Combobox(h_frame, textvariable=self.hour_var,
-                                      values=[str(h) for h in range(25)],
-                                      width=3, state="readonly",
-                                      style="Spinner.TCombobox")
+        self.hour_spin = DarkSpinner(h_frame, min_val=0, max_val=24, initial=0,
+                                      colors=c)
         self.hour_spin.pack()
 
         tk.Label(hm, text=":", font=("Consolas", 22, "bold"),
@@ -734,11 +954,8 @@ class ShutdownApp:
         m_frame.pack(side="left", padx=4)
         tk.Label(m_frame, text="MIN", font=("Segoe UI", 8),
                  fg=c["text_muted"], bg=c["bg_card"]).pack()
-        self.min_var = tk.StringVar(value="0")
-        self.min_spin = ttk.Combobox(m_frame, textvariable=self.min_var,
-                                     values=[str(m) for m in range(60)],
-                                     width=3, state="readonly",
-                                     style="Spinner.TCombobox")
+        self.min_spin = DarkSpinner(m_frame, min_val=0, max_val=59, initial=0,
+                                     colors=c)
         self.min_spin.pack()
 
         # Countdown
@@ -790,12 +1007,10 @@ class ShutdownApp:
         footer_f.pack(pady=(5, 2))
 
         if IS_WIN:
-            # Add a small stylish checkbox for startup
-            self.style.configure("Startup.TCheckbutton", background=c["bg_dark"], 
-                                 foreground=c["text_muted"], font=("Segoe UI", 8))
-            cb = ttk.Checkbutton(footer_f, text="Run on Startup", variable=self.startup_var, 
-                                 command=self._toggle_startup, style="Startup.TCheckbutton")
-            cb.pack(side="top", pady=(0, 2))
+            DarkCheckbox(footer_f, text="Run on Startup",
+                         variable=self.startup_var, command=self._toggle_startup,
+                         colors=c).pack(pady=(0, 2))
+
 
         tray_txt = "· Tray active" if IS_WIN else "· Tray: Windows only"
         tk.Label(footer_f,
@@ -814,9 +1029,13 @@ class ShutdownApp:
         except Exception:
             return False
 
+
+
+
+
     def _toggle_startup(self):
         if not IS_WIN: return
-        
+
         app_name = "LightsOut"
         if getattr(sys, 'frozen', False):
             app_path = sys.executable
@@ -826,7 +1045,8 @@ class ShutdownApp:
         if self.startup_var.get():
             try:
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_WRITE)
-                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{app_path}" --minimized')
+                cmd = f'"{app_path}" --minimized'
+                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, cmd)
                 winreg.CloseKey(key)
             except Exception as e:
                 self._show_info("Error", f"Failed to enable startup: {e}")
@@ -836,8 +1056,6 @@ class ShutdownApp:
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_WRITE)
                 winreg.DeleteValue(key, app_name)
                 winreg.CloseKey(key)
-            except Exception:
-                pass
             except Exception as e:
                 self._show_info("Error", f"Failed to disable startup: {e}")
                 self.startup_var.set(True)
@@ -875,12 +1093,12 @@ class ShutdownApp:
         return dialog.result
 
     def _set_preset(self, hours, minutes):
-        self.hour_var.set(str(hours))
-        self.min_var.set(str(minutes))
+        self.hour_spin.set(hours)
+        self.min_spin.set(minutes)
 
     def _get_total_minutes(self):
         try:
-            return int(self.hour_var.get()) * 60 + int(self.min_var.get())
+            return int(self.hour_spin.get()) * 60 + int(self.min_spin.get())
         except ValueError:
             return 0
 
@@ -985,13 +1203,7 @@ class ShutdownApp:
 
     def _on_close(self):
         if self._tray:
-            self.root.withdraw()
-            if not self._tray_hint_shown:
-                self._tray_hint_shown = True
-                self.root.after(200, lambda: self._show_info(
-                    "Minimised to Tray",
-                    "Lights Out is still running in the system tray.\n\n"
-                    "Right-click the tray icon to schedule or quit."))
+            self._minimise()
         else:
             if self.is_scheduled:
                 if self.mode_var == "sleep":
@@ -1027,15 +1239,29 @@ if __name__ == "__main__":
         
         # ERROR_ALREADY_EXISTS = 183
         if last_error == 183:
-            # Another instance is already running
-            # Optional: Find the existing window and bring it to front
-            hwnd = ctypes.windll.user32.FindWindowW("TkTopLevel", "⏻ Lights Out")
-            if hwnd:
-                ctypes.windll.user32.ShowWindow(hwnd, 5) # SW_SHOW
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            # Another instance is already running.
+            # Only bring the window to front if the user launched this manually
+            # (not via the startup registry with --minimized).
+            if "--minimized" not in sys.argv:
+                hwnd = ctypes.windll.user32.FindWindowW("TkTopLevel", "⏻ Lights Out")
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
             sys.exit(0)
 
     root = tk.Tk()
     root.configure(bg="#0f0f1a")
+
+    # Suppress the window immediately — before ShutdownApp builds any UI —
+    # so the default Tk window never flashes on screen at startup.
+    # overrideredirect must come first; on Windows it calls deiconify internally
+    # which would undo a preceding withdraw().
+    root.overrideredirect(True)
+    if "--minimized" in sys.argv:
+        root.withdraw()
+
     app = ShutdownApp(root)
     root.mainloop()
+
+    
+    #uvx pyinstaller Lights_Out.spec    
