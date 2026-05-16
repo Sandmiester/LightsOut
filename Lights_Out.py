@@ -900,13 +900,15 @@ class ShutdownApp:
 
         def btn(name, bg, fg, hover, **kw):
             s.configure(name, background=bg, foreground=fg,
-                        borderwidth=0, focusthickness=0, **kw)
-            s.map(name, background=[("active", hover)])
+                        borderwidth=0, focusthickness=0, focuscolor="", **kw)
+            s.map(name,
+                  background=[("active", hover)],
+                  relief=[("focus", "flat"), ("!focus", "flat")])
 
         btn("Shutdown.TButton",     c["accent"],       "white",             c["accent_hover"],
-            font=("Segoe UI", 11, "bold"), padding=(16, 9), width=18, anchor="center")
+            font=("Segoe UI", 11, "bold"), padding=(5, 5), width=18, anchor="center")
         btn("Cancel.TButton",       "#2d3436",         c["text_secondary"], "#3d4446",
-            font=("Segoe UI", 11, "bold"), padding=(14, 9))
+            font=("Segoe UI", 11, "bold"), padding=(5, 5), width=18, anchor="center")
         btn("Quick.TButton",        c["bg_card_alt"],  c["text_secondary"], c["accent"],
             font=("Segoe UI", 8, "bold"),  padding=(0, 5))
         s.map("Quick.TButton",
@@ -961,18 +963,32 @@ class ShutdownApp:
                  fg=c["text_muted"], bg=c["bg_card"]).pack(pady=(0, 4))
         tf = tk.Frame(mf, bg=c["bg_card"])
         tf.pack()
-        self.shutdown_mode_btn = ttk.Button(
-            tf, text="⏻  Shutdown", style="ModeActive.TButton",
-            command=lambda: self._set_mode("shutdown"))
-        self.shutdown_mode_btn.pack(side="left", padx=(0, 2))
-        self.restart_mode_btn = ttk.Button(
-            tf, text="↺  Restart", style="ModeInactive.TButton",
-            command=lambda: self._set_mode("restart"))
-        self.restart_mode_btn.pack(side="left", padx=2)
-        self.sleep_mode_btn = ttk.Button(
-            tf, text="🌙  Sleep", style="ModeInactive.TButton",
-            command=lambda: self._set_mode("sleep"))
-        self.sleep_mode_btn.pack(side="left", padx=(2, 0))
+        def _mode_btn(parent, text, style, cmd, ring_col, padx):
+            # highlightthickness=1 always reserved so focus ring never shifts layout;
+            # highlightbackground starts matching card bg (invisible), becomes ring_col on focus
+            wrap = tk.Frame(parent, bg=c["bg_card"],
+                            highlightthickness=1,
+                            highlightbackground=c["bg_card"],
+                            highlightcolor=c["bg_card"])
+            wrap.pack(side="left", padx=padx)
+            b = ttk.Button(wrap, text=text, style=style, command=cmd)
+            b.pack()
+            def _show(e, w=wrap, col=ring_col): w.config(highlightbackground=getattr(w, "_ring_col", col), highlightcolor=getattr(w, "_ring_col", col))
+            def _hide(e, w=wrap): w.config(highlightbackground=c["bg_card"], highlightcolor=c["bg_card"])
+            b.bind("<FocusIn>",       _show)
+            b.bind("<FocusOut>",      _hide)
+            b.bind("<ButtonPress-1>", _show)
+            return b
+
+        self.shutdown_mode_btn = _mode_btn(
+            tf, "⏻  Shutdown", "ModeActive.TButton",
+            lambda: self._set_mode("shutdown"), "#ffffff", (0, 2))
+        self.restart_mode_btn = _mode_btn(
+            tf, "↺  Restart", "ModeInactive.TButton",
+            lambda: self._set_mode("restart"), "#ffffff", 2)
+        self.sleep_mode_btn = _mode_btn(
+            tf, "🌙  Sleep", "ModeInactive.TButton",
+            lambda: self._set_mode("sleep"), "#ffffff", (2, 0))
 
         # Time pickers
         time_frame = tk.Frame(card, bg=c["bg_card"])
@@ -1024,9 +1040,16 @@ class ShutdownApp:
             bf.columnconfigure(col, weight=1)
         for col, (label, h, m) in enumerate(self.PRESETS):
             short = label.replace(" min", "m").replace(" hour", "h").replace("s", "")
-            ttk.Button(bf, text=short, style="Quick.TButton",
-                       command=lambda hh=h, mm=m: self._set_preset(hh, mm)
-                       ).grid(row=0, column=col, sticky="ew", padx=1)
+            wrap = tk.Frame(bf, bg=c["bg_card"],
+                            highlightthickness=1, highlightbackground=c["bg_card"],
+                            highlightcolor=c["bg_card"])
+            wrap.grid(row=0, column=col, sticky="ew", padx=1)
+            b = ttk.Button(wrap, text=short, style="Quick.TButton",
+                           command=lambda hh=h, mm=m: self._set_preset(hh, mm))
+            b.pack(fill="x")
+            b.bind("<FocusIn>",       lambda e, w=wrap: w.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+            b.bind("<FocusOut>",      lambda e, w=wrap: w.config(highlightbackground=c["bg_card"], highlightcolor=c["bg_card"]))
+            b.bind("<ButtonPress-1>", lambda e, w=wrap: w.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
 
         ttk.Separator(card, orient="horizontal",
                       style="Custom.TSeparator").pack(fill="x", padx=16, pady=2)
@@ -1034,15 +1057,31 @@ class ShutdownApp:
         # Action buttons
         af = tk.Frame(card, bg=c["bg_card"])
         af.pack(pady=10)
-        self.shutdown_btn = ttk.Button(af, text="⏻  Schedule Lights Out",
+
+        shutdown_wrap = tk.Frame(af, bg=c["bg_card"],
+                                 highlightthickness=1, highlightbackground=c["bg_card"],
+                                 highlightcolor=c["bg_card"])
+        shutdown_wrap.pack(side="left", padx=4)
+        self.shutdown_btn = ttk.Button(shutdown_wrap, text="⏻  Schedule Lights Out",
                                        style="Shutdown.TButton",
                                        command=self._schedule_shutdown)
-        self.shutdown_btn.pack(side="left", padx=4)
-        self.cancel_btn = ttk.Button(af, text="Cancel",
+        self.shutdown_btn.pack()
+        self.shutdown_btn.bind("<FocusIn>",       lambda e: shutdown_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+        self.shutdown_btn.bind("<FocusOut>",      lambda e: shutdown_wrap.config(highlightbackground=c["bg_card"], highlightcolor=c["bg_card"]))
+        self.shutdown_btn.bind("<ButtonPress-1>", lambda e: shutdown_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+
+        cancel_wrap = tk.Frame(af, bg=c["bg_card"],
+                               highlightthickness=1, highlightbackground=c["bg_card"],
+                               highlightcolor=c["bg_card"])
+        cancel_wrap.pack(side="left", padx=4)
+        self.cancel_btn = ttk.Button(cancel_wrap, text="Cancel",
                                      style="Cancel.TButton",
                                      command=self._cancel_shutdown,
                                      state="disabled")
-        self.cancel_btn.pack(side="left", padx=4)
+        self.cancel_btn.pack()
+        self.cancel_btn.bind("<FocusIn>",       lambda e: cancel_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+        self.cancel_btn.bind("<FocusOut>",      lambda e: cancel_wrap.config(highlightbackground=c["bg_card"], highlightcolor=c["bg_card"]))
+        self.cancel_btn.bind("<ButtonPress-1>", lambda e: cancel_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
 
         # Footer
         footer_f = tk.Frame(self.content_frame, bg=c["bg_dark"])
@@ -1281,9 +1320,16 @@ class ShutdownApp:
 
     def _set_mode(self, mode):
         self.mode_var = mode
+        c = self.colors
         for m, (attr, _) in self._MODE_CFG.items():
             style = "ModeActive.TButton" if m == mode else "ModeInactive.TButton"
-            getattr(self, attr).config(style=style)
+            btn = getattr(self, attr)
+            btn.config(style=style)
+            # Update the wrapper frame's ring colour to match new text colour
+            ring_col = "#ffffff"
+            wrap = btn.master
+            wrap.config(highlightbackground=c["bg_card"])  # reset to invisible; focus will show it
+            wrap._ring_col = ring_col  # store so FocusIn uses correct colour
         self.shutdown_btn.config(text=self._MODE_CFG[mode][1])
 
     def _show_info(self, title, message):
@@ -1345,8 +1391,8 @@ class ShutdownApp:
         self.status_label.config(
             text=f"{action} in {total_minutes} minute(s)",
             fg=self.colors["warning"])
-        self.shutdown_btn.config(state="disabled")
-        self.cancel_btn.config(state="normal")
+        self.shutdown_btn.config(state="disabled", style="Cancel.TButton")
+        self.cancel_btn.config(state="normal", style="Shutdown.TButton")
         self.hour_spin.config(state="disabled")
         self.min_spin.config(state="disabled")
         self.shutdown_mode_btn.config(state="disabled")
@@ -1398,8 +1444,8 @@ class ShutdownApp:
         self.remaining_seconds = 0
         self.countdown_label.config(text=countdown_text)
         self.status_label.config(text=status, fg=status_color)
-        self.shutdown_btn.config(state="normal")
-        self.cancel_btn.config(state="disabled")
+        self.shutdown_btn.config(state="normal", style="Shutdown.TButton")
+        self.cancel_btn.config(state="disabled", style="Cancel.TButton")
         self.hour_spin.config(state="readonly")
         self.min_spin.config(state="readonly")
         self.shutdown_mode_btn.config(state="normal")
@@ -1470,4 +1516,4 @@ if __name__ == "__main__":
     app = ShutdownApp(root)
     root.mainloop()
     
-    #uvx pyinstaller Lights_Out.spec    
+    #uvx pyinstaller Lights_Out.spec
