@@ -442,7 +442,8 @@ class DarkSpinner(tk.Frame):
     """
     def __init__(self, parent, min_val=0, max_val=59, initial=0,
                  width=56, colors=None, **kwargs):
-        c = colors or {}
+        self.colors = colors or {}
+        c = self.colors
         bg       = c.get("input_bg",      "#12121f")
         fg       = c.get("text_primary",  "#ffffff")
         muted    = c.get("text_muted",    "#5a5a72")
@@ -491,6 +492,14 @@ class DarkSpinner(tk.Frame):
         self._label.bind("<MouseWheel>", self._on_scroll)
         inner.bind("<MouseWheel>", self._on_scroll)
 
+    def update_theme(self):
+        """Called by parent when theme transition occurs."""
+        c = self.colors
+        bg = c.get("input_bg", "#12121f")
+        accent = c.get("accent", "#e94560")
+        self._up_btn.config(activebackground=bg, activeforeground=accent)
+        self._down_btn.config(activebackground=bg, activeforeground=accent)
+
     def _increment(self):
         if not self._enabled: return
         self._value = self._min if self._value >= self._max else self._value + 1
@@ -533,15 +542,7 @@ class DarkCheckbox(tk.Frame):
     W, H = 44, 22   # track dimensions
 
     def __init__(self, parent, text="", variable=None, command=None, colors=None, **kwargs):
-        c = colors or {}
-        self._bg        = c.get("bg_dark",     "#0f0f1a")
-        self._accent    = c.get("accent",       "#e94560")
-        self._border    = c.get("border",       "#2a2a40")
-        self._fg        = c.get("text_muted",   "#5a5a72")
-        self._fg_on     = c.get("text_primary", "#ffffff")
-        self._track_off = c.get("bg_card_alt",  "#16213e")
-        self._hover_bg  = c.get("bg_card",      "#1a1a2e")
-
+        self.colors = colors if colors is not None else {}
         super().__init__(parent, bg=self._bg, cursor="hand2", **kwargs)
 
         self._var     = variable if variable is not None else tk.BooleanVar()
@@ -554,9 +555,10 @@ class DarkCheckbox(tk.Frame):
                              bg=self._bg, highlightthickness=0)
         self._cv.pack(side="left", padx=(0, 8))
 
-        # Label
+        # Label - use initial state to set correct foreground
+        initial_fg = self._fg_on if self._var.get() else self._fg
         self._lbl = tk.Label(self, text=text, font=("Segoe UI", 9),
-                             fg=self._fg, bg=self._bg)
+                             fg=initial_fg, bg=self._bg)
         self._lbl.pack(side="left")
 
         self._draw()
@@ -565,6 +567,27 @@ class DarkCheckbox(tk.Frame):
             w.bind("<Button-1>", self._toggle)
             w.bind("<Enter>",    self._on_enter)
             w.bind("<Leave>",    self._on_leave)
+
+    @property
+    def _bg(self): return self.colors.get("bg_dark", "#0f0f1a")
+    @property
+    def _accent(self): return self.colors.get("accent", "#e94560")
+    @property
+    def _border(self): return self.colors.get("border", "#2a2a40")
+    @property
+    def _fg(self): return self.colors.get("text_muted", "#5a5a72")
+    @property
+    def _fg_on(self): return self.colors.get("text_primary", "#ffffff")
+    @property
+    def _track_off(self): return self.colors.get("bg_card_alt", "#16213e")
+    @property
+    def _hover_bg(self): return self.colors.get("bg_card", "#1a1a2e")
+
+    def update_theme(self):
+        """Called by parent when theme transition occurs."""
+        # Update label tag so it receives the correct interpolated color
+        self._lbl._theme_fg = "text_primary" if self._var.get() else "text_muted"
+        self._draw()
 
     # ── Drawing ──────────────────────────────────────────────────────────────
     @staticmethod
@@ -1151,24 +1174,36 @@ class ShutdownApp:
         def lc(role):
             return self._lerp(n[role], d[role], t)
 
-        # Update live colours dict
-        self.colors = {k: lc(k) for k in n}
+        # Update live colours dict in-place so custom widgets see it
+        for k in n:
+            self.colors[k] = lc(k)
 
         # Apply to all tagged widgets
         def walk(parent):
             for w in parent.winfo_children():
+                # Custom theme-aware widgets
+                if hasattr(w, "update_theme"):
+                    w.update_theme()
+
                 try:
-                    if hasattr(w, '_theme_bg'):
-                        w.config(bg=lc(w._theme_bg))
+                    if hasattr(w, "_theme_bg"):
+                        c = lc(w._theme_bg)
+                        w.config(bg=c)
+                        # Also update active background for standard buttons
+                        if isinstance(w, (tk.Button, tk.Menu)):
+                            w.config(activebackground=c)
                 except Exception:
                     pass
                 try:
-                    if hasattr(w, '_theme_fg'):
-                        w.config(fg=lc(w._theme_fg))
+                    if hasattr(w, "_theme_fg"):
+                        c = lc(w._theme_fg)
+                        w.config(fg=c)
+                        if isinstance(w, (tk.Button, tk.Menu)):
+                            w.config(activeforeground=c)
                 except Exception:
                     pass
                 try:
-                    if hasattr(w, '_theme_hb'):
+                    if hasattr(w, "_theme_hb"):
                         w.config(highlightbackground=lc(w._theme_hb))
                 except Exception:
                     pass
