@@ -948,7 +948,7 @@ class ShutdownApp:
         tk.Label(hf, text="⏻  Lights Out",
                  font=("Segoe UI", 15, "bold"),
                  fg=c["text_primary"], bg=c["bg_dark"]).pack()
-        tk.Label(hf, text="Schedule your PC to shut down or restart",
+        tk.Label(hf, text="Schedule your PC to shut down, restart, or sleep",
                  font=("Segoe UI", 9),
                  fg=c["text_secondary"], bg=c["bg_dark"]).pack()
 
