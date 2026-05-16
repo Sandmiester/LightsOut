@@ -595,33 +595,30 @@ class DarkCheckbox(tk.Frame):
         kr   = H / 2 - pad - 1   # knob radius
 
         if knob_x is None:
-            knob_x = W - pad - kr * 2 - 2 if on else pad + 2
+            knob_x = W - pad - kr * 2 if on else pad + 2
             self._knob_x = knob_x
 
         track_color = self._accent if on else self._track_off
-        bg = self._cv["bg"]
 
-        # Smooth pill track
+        # Smooth pill track — outline matches fill to avoid 1px fringe
         pts = self._pill_points(pad, pad, W - pad, H - pad)
-        cv.create_polygon(pts, fill=track_color, outline="", smooth=False)
+        cv.create_polygon(pts, fill=track_color, outline=track_color, smooth=False)
 
-        # Knob shadow (slightly larger, semi-transparent approximated by bg blend)
-        sx = knob_x + kr
-        sy = H / 2 + 1
-        sr = kr + 1
-        cv.create_oval(sx - sr, sy - sr, sx + sr, sy + sr,
-                       fill=self._border, outline="")
-
-        # Knob — smooth circle
+        # Knob — drawn 1px larger than the track radius so it fully covers
+        # any track edge bleed beneath it
         kx = knob_x + kr
         ky = H / 2
-        cv.create_oval(kx - kr, ky - kr, kx + kr, ky + kr,
-                       fill="white", outline="")
+        cv.create_oval(kx - kr - 1, ky - kr - 1, kx + kr + 1, ky + kr + 1,
+                       fill="white", outline="white")
 
     # ── Animation ────────────────────────────────────────────────────────────
     def _animate(self):
-        on       = self._var.get()
-        target_x = (self.W - self.H + 2) if on else 4
+        on    = self._var.get()
+        pad   = 2
+        kr    = self.H / 2 - pad - 1
+        t_on  = self.W - pad - kr * 2
+        t_off = pad + 2
+        target_x = t_on if on else t_off
         step     = 3 if on else -3
         new_x    = self._knob_x + step
 
@@ -698,6 +695,24 @@ class ShutdownApp:
             "titlebar":       "#0a0a14",
         }
 
+        # Dark mode colours (active timer)
+        self.colors_normal = dict(self.colors)
+        self.colors_dark = {
+            "bg_dark":        "#050508",
+            "bg_card":        "#0a0a0f",
+            "bg_card_alt":    "#080810",
+            "accent":         "#e94560",
+            "accent_hover":   "#ff6b81",
+            "text_primary":   "#ffffff",
+            "text_secondary": "#6a6a80",
+            "text_muted":     "#333345",
+            "success":        "#00d2d3",
+            "warning":        "#feca57",
+            "border":         "#111120",
+            "input_bg":       "#050508",
+            "titlebar":       "#030305",
+        }
+
         self.content_frame = None
         self.is_scheduled      = False
         self.remaining_seconds = 0
@@ -707,6 +722,8 @@ class ShutdownApp:
         self._tray_hint_shown  = False
         self._drag_x           = 0
         self._drag_y           = 0
+        self._theme_anim_id    = None
+        self._theme_progress   = 0.0   # 0.0 = normal, 1.0 = dark
 
         if IS_WIN:
             self.startup_var = tk.BooleanVar(value=self._is_startup_enabled())
@@ -716,6 +733,7 @@ class ShutdownApp:
         self._apply_background()
         self._build_ui()
         self._center_window()
+        self._tag_all_widgets()  # must be called after all UI is built
 
         # Start native tray on Windows only
         if IS_WIN:
@@ -889,7 +907,8 @@ class ShutdownApp:
         self.canvas.place(x=0, y=32, relwidth=1, height=508)
         # Bottom accent bar
         self.canvas.create_rectangle(0, 505, 380, 508,
-                                     fill=self.colors["accent"], outline="")
+                                     fill=self.colors["accent"], outline="",
+                                     tags="accent_bar")
         self.content_frame = tk.Frame(self.root, bg=self.colors["bg_dark"])
         self.content_frame.place(relx=0.5, y=32, anchor="n")
 
@@ -1060,6 +1079,157 @@ class ShutdownApp:
                 self._show_info("Error", f"Failed to disable startup: {e}")
                 self.startup_var.set(True)
 
+    # ─── Theme transition ─────────────────────────────────────────────────────
+    @staticmethod
+    def _hex_to_rgb(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+    @staticmethod
+    def _rgb_to_hex(r, g, b):
+        return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
+
+    def _lerp(self, a, b, t):
+        ra,ga,ba = self._hex_to_rgb(a)
+        rb,gb,bb = self._hex_to_rgb(b)
+        return self._rgb_to_hex(ra+(rb-ra)*t, ga+(gb-ga)*t, ba+(bb-ba)*t)
+
+    def _tag_widget(self, widget, bg_role=None, fg_role=None, hb_role=None):
+        """Store colour roles on a widget so transitions always use original values."""
+        if bg_role: widget._theme_bg = bg_role
+        if fg_role: widget._theme_fg = fg_role
+        if hb_role: widget._theme_hb = hb_role
+        if not hasattr(widget, '_theme_children'):
+            widget._theme_children = []
+
+    def _collect_tagged(self, parent, out):
+        for w in parent.winfo_children():
+            if hasattr(w, '_theme_bg') or hasattr(w, '_theme_fg') or hasattr(w, '_theme_hb'):
+                out.append(w)
+            self._collect_tagged(w, out)
+
+    def _tag_all_widgets(self):
+        """Walk all widgets after UI is built and tag them by their initial colour role."""
+        normal = self.colors_normal
+        # Build reverse map: hex colour -> role name
+        bg_reverse = {v: k for k, v in normal.items()}
+
+        def walk(parent):
+            for w in parent.winfo_children():
+                # bg
+                try:
+                    bg = w.cget("bg")
+                    if bg in bg_reverse:
+                        w._theme_bg = bg_reverse[bg]
+                except Exception:
+                    pass
+                # fg
+                try:
+                    fg = w.cget("fg")
+                    if fg in bg_reverse:
+                        w._theme_fg = bg_reverse[fg]
+                except Exception:
+                    pass
+                # highlightbackground
+                try:
+                    hb = w.cget("highlightbackground")
+                    if hb in bg_reverse:
+                        w._theme_hb = bg_reverse[hb]
+                except Exception:
+                    pass
+                walk(w)
+
+        walk(self.root)
+        # Also tag root itself
+        self.root._theme_bg = "bg_dark"
+
+    def _apply_theme(self, t):
+        """Apply interpolated colours to all tagged widgets."""
+        n = self.colors_normal
+        d = self.colors_dark
+
+        def lc(role):
+            return self._lerp(n[role], d[role], t)
+
+        # Update live colours dict
+        self.colors = {k: lc(k) for k in n}
+
+        # Apply to all tagged widgets
+        def walk(parent):
+            for w in parent.winfo_children():
+                try:
+                    if hasattr(w, '_theme_bg'):
+                        w.config(bg=lc(w._theme_bg))
+                except Exception:
+                    pass
+                try:
+                    if hasattr(w, '_theme_fg'):
+                        w.config(fg=lc(w._theme_fg))
+                except Exception:
+                    pass
+                try:
+                    if hasattr(w, '_theme_hb'):
+                        w.config(highlightbackground=lc(w._theme_hb))
+                except Exception:
+                    pass
+                walk(w)
+
+        # Root window
+        try:
+            self.root.config(bg=lc("bg_dark"))
+        except Exception:
+            pass
+
+        walk(self.root)
+
+        # Canvas background and accent bar
+        try:
+            self.canvas.config(bg=lc("bg_dark"))
+            self.canvas.itemconfig("accent_bar", fill=lc("accent"), outline=lc("accent"))
+        except Exception:
+            pass
+
+        # ttk styled buttons
+        s = self.style
+        try:
+            s.configure("Cancel.TButton",
+                background=self._lerp("#2d3436", "#0d1011", t),
+                foreground=lc("text_secondary"))
+            s.map("Cancel.TButton",
+                  background=[("active", self._lerp("#3d4446", "#151819", t))])
+            s.configure("ModeInactive.TButton",
+                background=lc("bg_card_alt"),
+                foreground=lc("text_muted"))
+            s.map("ModeInactive.TButton",
+                  background=[("active", lc("border"))])
+            s.configure("Custom.TSeparator",
+                background=lc("border"))
+            s.configure("Quick.TButton",
+                background=lc("bg_card_alt"),
+                foreground=lc("text_secondary"))
+            s.map("Quick.TButton",
+                  background=[("active", lc("accent"))],
+                  foreground=[("active", "white")])
+        except Exception:
+            pass
+
+    def _run_theme_transition(self, to_dark, step=0.05):
+        if self._theme_anim_id:
+            self.root.after_cancel(self._theme_anim_id)
+            self._theme_anim_id = None
+
+        delta = step if to_dark else -step
+
+        def tick():
+            self._theme_progress = max(0.0, min(1.0, self._theme_progress + delta))
+            self._apply_theme(self._theme_progress)
+            if 0.0 < self._theme_progress < 1.0:
+                self._theme_anim_id = self.root.after(16, tick)
+            else:
+                self._theme_anim_id = None
+
+        tick()
+
     def _center_window(self):
         self.root.update_idletasks()
         w, h = self.root.winfo_width(), self.root.winfo_height()
@@ -1147,6 +1317,7 @@ class ShutdownApp:
         self.shutdown_mode_btn.config(state="disabled")
         self.restart_mode_btn.config(state="disabled")
         self.sleep_mode_btn.config(state="disabled")
+        self._run_theme_transition(to_dark=True)
         self._update_countdown()
 
     def _update_countdown(self):
@@ -1200,6 +1371,7 @@ class ShutdownApp:
         self.restart_mode_btn.config(state="normal")
         self.sleep_mode_btn.config(state="normal")
         self._update_tray_tooltip()
+        self._run_theme_transition(to_dark=False)
 
     def _on_close(self):
         if self._tray:
@@ -1262,6 +1434,5 @@ if __name__ == "__main__":
 
     app = ShutdownApp(root)
     root.mainloop()
-
     
     #uvx pyinstaller Lights_Out.spec    
