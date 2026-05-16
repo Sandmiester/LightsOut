@@ -747,6 +747,7 @@ class ShutdownApp:
         self._drag_y           = 0
         self._theme_anim_id    = None
         self._theme_progress   = 0.0   # 0.0 = normal, 1.0 = dark
+        self.preset_buttons    = []
 
         if IS_WIN:
             self.startup_var = tk.BooleanVar(value=self._is_startup_enabled())
@@ -973,7 +974,11 @@ class ShutdownApp:
             wrap.pack(side="left", padx=padx)
             b = ttk.Button(wrap, text=text, style=style, command=cmd)
             b.pack()
-            def _show(e, w=wrap, col=ring_col): w.config(highlightbackground=getattr(w, "_ring_col", col), highlightcolor=getattr(w, "_ring_col", col))
+            def _show(e, w=wrap, col=ring_col):
+                if self.is_scheduled:
+                    return "break"
+                w.config(highlightbackground=getattr(w, "_ring_col", col),
+                         highlightcolor=getattr(w, "_ring_col", col))
             def _hide(e, w=wrap): w.config(highlightbackground=c["bg_card"], highlightcolor=c["bg_card"])
             b.bind("<FocusIn>",       _show)
             b.bind("<FocusOut>",      _hide)
@@ -1047,9 +1052,10 @@ class ShutdownApp:
             b = ttk.Button(wrap, text=short, style="Quick.TButton",
                            command=lambda hh=h, mm=m: self._set_preset(hh, mm))
             b.pack(fill="x")
-            b.bind("<FocusIn>",       lambda e, w=wrap: w.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+            b.bind("<FocusIn>",       lambda e, w=wrap: "break" if self.is_scheduled else w.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
             b.bind("<FocusOut>",      lambda e, w=wrap: w.config(highlightbackground=c["bg_card"], highlightcolor=c["bg_card"]))
-            b.bind("<ButtonPress-1>", lambda e, w=wrap: w.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+            b.bind("<ButtonPress-1>", lambda e, w=wrap: "break" if self.is_scheduled else w.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+            self.preset_buttons.append(b)
 
         ttk.Separator(card, orient="horizontal",
                       style="Custom.TSeparator").pack(fill="x", padx=16, pady=2)
@@ -1062,13 +1068,14 @@ class ShutdownApp:
                                  highlightthickness=1, highlightbackground=c["bg_card"],
                                  highlightcolor=c["bg_card"])
         shutdown_wrap.pack(side="left", padx=4)
+        self.shutdown_wrap = shutdown_wrap
         self.shutdown_btn = ttk.Button(shutdown_wrap, text="⏻  Schedule Lights Out",
                                        style="Shutdown.TButton",
                                        command=self._schedule_shutdown)
         self.shutdown_btn.pack()
-        self.shutdown_btn.bind("<FocusIn>",       lambda e: shutdown_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+        self.shutdown_btn.bind("<FocusIn>",       lambda e: "break" if self.is_scheduled else shutdown_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
         self.shutdown_btn.bind("<FocusOut>",      lambda e: shutdown_wrap.config(highlightbackground=c["bg_card"], highlightcolor=c["bg_card"]))
-        self.shutdown_btn.bind("<ButtonPress-1>", lambda e: shutdown_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
+        self.shutdown_btn.bind("<ButtonPress-1>", lambda e: "break" if self.is_scheduled else shutdown_wrap.config(highlightbackground="#ffffff", highlightcolor="#ffffff"))
 
         cancel_wrap = tk.Frame(af, bg=c["bg_card"],
                                highlightthickness=1, highlightbackground=c["bg_card"],
@@ -1332,6 +1339,37 @@ class ShutdownApp:
             wrap._ring_col = ring_col  # store so FocusIn uses correct colour
         self.shutdown_btn.config(text=self._MODE_CFG[mode][1])
 
+    def _set_mode_buttons_locked(self, locked):
+        state = "disabled" if locked else "normal"
+        for btn in (self.shutdown_mode_btn, self.restart_mode_btn, self.sleep_mode_btn):
+            btn.config(state=state)
+            wrap = btn.master
+            wrap.config(highlightbackground=self.colors["bg_card"],
+                        highlightcolor=self.colors["bg_card"])
+        if locked:
+            focused = self.root.focus_get()
+            if focused in (self.shutdown_mode_btn, self.restart_mode_btn, self.sleep_mode_btn):
+                self.root.focus_set()
+
+    def _set_presets_locked(self, locked):
+        state = "disabled" if locked else "normal"
+        for btn in self.preset_buttons:
+            btn.config(state=state)
+            wrap = btn.master
+            wrap.config(highlightbackground=self.colors["bg_card"],
+                        highlightcolor=self.colors["bg_card"])
+        if locked:
+            focused = self.root.focus_get()
+            if focused in self.preset_buttons:
+                self.root.focus_set()
+
+    def _set_schedule_button_ring_locked(self, locked):
+        if hasattr(self, "shutdown_wrap"):
+            self.shutdown_wrap.config(highlightbackground=self.colors["bg_card"],
+                                      highlightcolor=self.colors["bg_card"])
+        if locked and self.root.focus_get() == self.shutdown_btn:
+            self.root.focus_set()
+
     def _show_info(self, title, message):
         CustomMessage(self.root, title, message, type="info", colors=self.colors)
 
@@ -1395,9 +1433,9 @@ class ShutdownApp:
         self.cancel_btn.config(state="normal", style="Shutdown.TButton")
         self.hour_spin.config(state="disabled")
         self.min_spin.config(state="disabled")
-        self.shutdown_mode_btn.config(state="disabled")
-        self.restart_mode_btn.config(state="disabled")
-        self.sleep_mode_btn.config(state="disabled")
+        self._set_mode_buttons_locked(True)
+        self._set_presets_locked(True)
+        self._set_schedule_button_ring_locked(True)
         self._run_theme_transition(to_dark=True)
         self._update_countdown()
 
@@ -1448,9 +1486,9 @@ class ShutdownApp:
         self.cancel_btn.config(state="disabled", style="Cancel.TButton")
         self.hour_spin.config(state="readonly")
         self.min_spin.config(state="readonly")
-        self.shutdown_mode_btn.config(state="normal")
-        self.restart_mode_btn.config(state="normal")
-        self.sleep_mode_btn.config(state="normal")
+        self._set_mode_buttons_locked(False)
+        self._set_presets_locked(False)
+        self._set_schedule_button_ring_locked(False)
         self._update_tray_tooltip()
         self._run_theme_transition(to_dark=False)
 
