@@ -173,7 +173,14 @@ class Win32Tray:
         nid.szTip            = "Lights Out"
         self._nid = nid
 
-        shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+        # Retry Shell_NotifyIconW until the shell is ready (returns 1 on success).
+        # This handles the case where the app starts before the tray shell is
+        # fully initialised on Windows boot.
+        for _ in range(30):
+            if shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
+                break
+            import time
+            time.sleep(1)
         self._ready.set()
 
         msg = ctypes.wintypes.MSG()
@@ -759,7 +766,9 @@ class ShutdownApp:
         self._center_window()
         self._tag_all_widgets()  # must be called after all UI is built
 
-        # Start native tray on Windows only
+        # Start native tray on Windows only.
+        # Win32Tray._run retries Shell_NotifyIconW until the shell is ready,
+        # so it is safe to initialise immediately even on Windows boot.
         if IS_WIN:
             try:
                 self._tray = Win32Tray(on_action=self._tray_action,
